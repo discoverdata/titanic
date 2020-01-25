@@ -1,0 +1,532 @@
+---
+title: "Who survived the Titanic!"
+output:
+  html_document:
+    df_print: paged
+  fig_height: 10
+  fig_width: 10
+  code_folding: hide
+  html_notebook: null
+  number_section: yes
+  theme: default
+  toc: yes
+  toc_collapsed: yes
+  toc_depth: 4
+  toc_float: yes
+---
+
+![](images/Titanic.jpg)
+
+# Introduction 
+
+The sinking of the Titanic ship is one of the most infamous accidents in history. On April 15, 1912, Titanic sank after colliding with an iceberg resulting in the death of nearly 60% of the passengers. In this exercise, we will compare various machine learning models that could predict the survival rate using passenger data (like name, title, ticket number, gender, class, etc.)
+
+# Objective 
+
+1. Model the survival rate of passengers in the Titanic dataset
+2. End to end analysis
+3. Compare various ML techniques
+
+```{r functions}
+setwd("C:/Users/khannva1/Documents/DS-Projects/Titanic")
+
+# This function calculates the confusion matrix
+cm <- function(model, data, target){
+confusionMatrix(predict(model, newdata = data), target)
+}
+# Function to split the continous varibale into bins
+custom_cut <- function(x, lower = 0, upper, by = 10,
+                   sep = "-", above.char = "+") {
+
+ labs <- c(paste(seq(lower, upper - by, by = by),
+                 seq(lower + by - 1, upper - 1, by = by),
+                 sep = sep),
+           paste(upper, above.char, sep = ""))
+
+ cut(floor(x), breaks = c(seq(lower, upper, by = by), Inf),
+     right = FALSE, labels = labs)
+}
+
+'%ni%' <- Negate('%in%')
+```
+
+## Import the libraries and read data
+
+I will import libraries such as *dplyr*, *tidyr*, *caret*, *gridExtra* and *purrr*.
+
+```{r read_data, message=FALSE, warning=FALSE}
+library("dplyr", quietly = T)
+library("tidyr", quietly = T)
+library("readr", quietly = T)
+library("kableExtra", quietly = T)
+library("caret", quietly = T)
+library("stringr", quietly = T)
+library("purrr", quietly = T)
+library("gridExtra")
+train <- suppressMessages(read_csv("C:\\Users\\khannva1\\Documents\\DS-Projects\\Titanic\\train.csv"))
+test <- suppressMessages(read_csv("C:\\Users\\khannva1\\Documents\\DS-Projects\\Titanic\\test.csv"))
+```
+
+## Exploratory data analysis
+
+Exploratory data analysis refers to exploring the data numerically and graphically.
+
+```{r eda1}
+eda <- train
+eda %>% head() %>% 
+  kable() %>% kable_styling(bootstrap_options = c("striped", "condensed", "responsive"), full_width = F, position = "center")
+
+eda %>% group_by(Survived) %>% 
+  summarise(count = n(), percent = count/nrow(train)) %>% 
+  kable() %>% kable_styling(bootstrap_options = c("striped", "condensed", "responsive"), full_width = F, position = "center")
+```
+
+There are 891 rows and 12 columns (features) in the training data set and 418 rows and 11 features in the test set. the percentage of the survived and not survived passengers is 38.3% and 61.4% respectively. Types of features are given the table below 
+
+```{r table}
+col_type <- data.frame(Features = names(eda), Defination = c("Id", "Survival", "Ticket Class", "Name", "Sex", "Age", "Number of siblings/spouses", "Number of parents/childern", "Ticket number", "Passenger fare", "Cabin number","Boarding port"), Type = c("Numeric", "0 = No, 1 = Yes", "1 = 1st, 2 = 2nd, 3 = 3rd", "Character","Male, Female","Numeric","Numeric","Numeric","Character","Numeric","Character","C = Cherbourg, Q = Queenstown, S = Southampton"))
+
+col_type %>% 
+  kable() %>% kable_styling(bootstrap_options = c("striped", "condensed", "responsive"), full_width = F, position = "center")
+```
+### Numeric variable
+
+Age and Fare are numeric continuous variables and let us look at them based on the target variable. 
+
+```{r eda_numeric}
+eda$Survived <- as.factor(eda$Survived)
+
+p1 <- eda %>% drop_na(Age) %>% ggplot(aes(y = Age, x= Survived, fill = Survived)) + geom_boxplot() + 
+    ggtitle(label = "Distribution of Ages of the Passengers") +
+    ylab(label = "Age") + labs(fill = "Survived") + coord_flip()
+
+p2 <- eda %>% drop_na(Fare) %>% ggplot(aes(y = Fare, x = Survived, fill = Survived)) + geom_boxplot() + 
+    ggtitle(label = "Distribution of Fare of the Passengers") +
+    ylab(label = "Fare") + labs(fill = "Survived") + coord_flip()
+
+grid.arrange(p1, p2, nrow=2)
+```
+
+**Age:** We note that most of the passengers were young from 20 to 40 years old in both the categories. The median age in the training dataset is 28 and the mean is 29.7 years.
+
+**Fare:** Also, the fare shows that most of the passengers paid less than 100 Pounds per ticket. Further, it seems like there is a higher chance of survival if passengers have paid more.
+
+### Categorical variables
+
+```{r eda_categorical}
+p3 <- eda %>% drop_na(Pclass) %>% group_by(Pclass, Survived) %>% 
+  summarize(Percent = round(n()/nrow(.),2)) %>%  
+  ggplot(aes(x = Pclass, y = Percent, fill = Survived)) + geom_bar(stat = "identity") + 
+  ggtitle(label = "Ticket classes") +
+  labs(fill = "Survived")
+
+p4 <- eda %>% drop_na(Sex) %>% group_by(Sex, Survived) %>% 
+  summarize(Percent = round(n()/nrow(.),2)) %>%  
+  ggplot(aes(x = Sex, y = Percent, fill = Survived)) + geom_bar(stat = "identity") + 
+  ggtitle(label = "Gender") +
+  labs(fill = "Survived")
+
+p5 <- eda %>% drop_na(SibSp) %>% group_by(SibSp, Survived) %>% 
+    summarize(Percent = round(n()/nrow(.),2)) %>%  
+    ggplot(aes(x = SibSp, y = Percent, fill = Survived)) + geom_bar(stat = "identity") + 
+    ggtitle(label = "Siblings or spouses") +
+    labs(fill = "Survived")
+
+p6 <- eda %>% drop_na(Parch) %>% group_by(Parch, Survived) %>% 
+    summarize(Percent = round(n()/nrow(.),2)) %>%  
+    ggplot(aes(x = Parch, y = Percent, fill = Survived)) + geom_bar(stat = "identity") + 
+    ggtitle(label = "Parents or childern") +
+    labs(fill = "Survived")
+
+p7 <- eda %>% drop_na(Embarked) %>% group_by(Embarked, Survived) %>% 
+    summarize(Percent = round(n()/nrow(.),2)) %>%  
+    ggplot(aes(x = Embarked, y = Percent, fill = Survived)) + geom_bar(stat = "identity") + 
+    ggtitle(label = "Boarding stations") +
+    labs(fill = "Survived")
+
+grid.arrange(p3, p4, p5, p6, p7, nrow=3)
+```
+
+1. **Pclass:** It looks like first-class passengers had a higher rate of survival. It is not an unexpected finding as people with first-class tickets would have been given preference over people with lower-class tickets.
+
+2. **Gender:** High survival chance if the passenger was female. It makes sense because females and children would have been given preference during evacuation.
+
+3. **Number of Siblings or Spouse:** Survival rate is high for passengers with Siblings or Spouses. It may be due to the fact that more trusted people you have onboard more the chance of getting reliable information. Reliable information is critical for survival.
+
+4. **Number of Parents or children:** Similarly, the survival rate is higher for passengers with Parents or children. I think the same logic applies as above.
+
+5. **Boarding station:** It turns out that people who board form Cherbourg and Queenstown station have a higher rate of survival. It will be interesting to dig deeper and see if the majority of the people who board from these two stations have first- or second-class tickets. In case that is true, it will help explain the observation.
+
+```{r embarked_pclass}
+not_cq <- eda %>% filter(Embarked %ni% c('C','Q')) %>% 
+  group_by(Pclass)%>% summarise(n = n()) %>% 
+  mutate(percent = n/sum(n))
+
+cq <- eda %>% filter(Embarked %in% c('C','Q')) %>% 
+  group_by(Pclass)%>% summarise(n = n()) %>% 
+  mutate(percent = n/sum(n))
+
+not_cq$Embarked <- 'notFromCQ'
+cq$Embarked <- 'FromCQ'
+
+rbind(not_cq,cq) %>% ggplot(aes(x = Pclass, y = percent, fill = Embarked)) + 
+  geom_bar(stat = "identity", position = "dodge")
+```
+
+Indeed we find that there are more first-class passengers from Cherbourg and Queenstown stations.
+
+### Multivariate analysis 
+
+1. Passenger survival by Pclass and Age and Pclass and Fare
+
+```{r multivariate}
+eda$Pclass <- as.factor(eda$Pclass)
+
+p8 <- eda %>% drop_na(Age) %>% ggplot(aes(x = Pclass, y = Age)) + geom_boxplot(aes(fill = Survived))
+
+p9 <- eda %>% drop_na(Fare) %>% ggplot(aes(x = Pclass, y = Fare)) + geom_boxplot(aes(fill = Survived))
+
+grid.arrange(p8, p9, nrow = 2)
+```
+
+## Data wrangling
+
+Combine the train and test dataset into one dataset for easier imputation of missing values. Create an *isTrain* binary logical variable to distinguish between train and test set for later use.
+
+```{r combine_data}
+train <- train %>% mutate(isTrain = TRUE)
+survived  <- train %>% pull(Survived)
+train <- train %>% select(-c(Survived))
+
+test <- test %>% mutate(isTrain = FALSE)
+
+df <- bind_rows(train, test)
+```
+
+### Missing values
+
+A quick investigation of the combined dataset shows that there are missing values in *Age*, *Cabin*, *Embarked*, *Fare*. *Cabin* has a large number of missing values (~77%) followed by *Age* (~20%), 2 values in *Embarked* and 1 in *Fare*.
+
+```{r missing_values}
+missing.values <- df %>% gather(key = "key", value = "val") %>% mutate(is.missing = is.na(val)) %>% 
+  # Calculate missing in each category
+  group_by(key) %>% mutate(total = n()) %>%
+  group_by(key,total,is.missing) %>%
+  summarise(num.missing = n()) %>% 
+  # claculate percentage
+  mutate(pct = num.missing/total * 100)
+  
+  names <- (missing.values %>% filter(is.missing == TRUE) %>% 
+    arrange(desc(pct)))$key
+
+# Change the column names for better readability
+ungroup(missing.values) %>% filter(is.missing == TRUE) %>% select(-c('pct','total', 'is.missing')) %>% rename("Column" = "key", "Missing" = "num.missing") %>% kable() %>% kable_styling(bootstrap_options = c("striped", "condensed", "responsive"), full_width = F, position = "center")
+
+
+# Plot missing values
+p10 <- ggplot(missing.values) + geom_bar(aes( x= reorder(key, desc(pct)), y = pct, fill = is.missing), stat = 'identity', alpha = 0.8) + scale_fill_manual(name = "", values = c('steelblue','tomato3'), label = c("Present", "Missing")) + coord_flip() + labs(title = "Percentage of missing values",x = '',y = '% missing')
+
+p10
+```
+
+### Impute missing values
+
+Let us impute the missing values. 
+
+1. For *Cabin* I will extract and store the first letter of the Cabin column and I will replace all the missing values with the letter 'U' referring to 'Unknown'.
+
+2. For *Embarked* I will replace the missing value with 'S' as it the most common station to embark. 
+
+3. For *Fare* and *Age* I will build a linear and decision tree model to predict the missing values. 
+
+#### Cabin 
+Let us extract first letter from the Cabin and replace missing values with the *U*. Also, I will create a new binary variable called *CabinMissing* to encode values which are missing or present in Cabin column. 
+```{r impute_cabin}
+# Replace Cabin with missing or not missing
+df <- df %>% mutate(CabinMissing = ifelse(is.na(Cabin), "Yes","No"))
+df$Cabin <- str_extract(df$Cabin, "\\w") %>% ifelse(is.na(.), "U",.)
+df$Cabin <- ifelse(df$Cabin == 'T', "U", df$Cabin)
+p11 <- df %>% ggplot(aes(x = Cabin)) + geom_bar()
+p12 <- df %>% ggplot(aes(x = CabinMissing)) + geom_bar()
+
+grid.arrange(p11, p12, ncol = 2)
+```
+
+#### Embarked
+
+Since *S* is the most common boarding station so will fill the two missing values in the Embarked column by *S*.
+
+```{r impute_embarked}
+# Fill in the missing values in Embarked column.
+df$Embarked <- ifelse(is.na(df$Embarked), "S", df$Embarked)
+```
+
+#### Fare
+To fill in the one missing value we will create a *cubist* model to predict Fare. The built model has good R-squared value.
+```{r impute_fare}
+# By building the model
+fare_lt_65 <- df %>% filter(Fare <= 65) %>% select(Pclass, Sex, Age, Parch, SibSp, Embarked, Fare)
+fare.formula <- as.formula(Fare ~ Pclass + Sex + Parch + Embarked + SibSp)
+ctrl <- trainControl(method = "repeatedcv",
+                     repeats = 5)
+
+model.fare <- train(fare.formula, data = fare_lt_65, method = "cubist", trControl = ctrl, tuneLength = 5)
+# Look at the model
+model.fare
+
+to_predict <- df %>% filter(is.na(Fare))%>%select(Pclass, Sex, Age, Parch, Embarked, SibSp)
+
+fare.predictions <- predict(model.fare, newdata = to_predict)
+
+df$Fare <- ifelse(is.na(df$Fare), fare.predictions, df$Fare)
+```
+
+#### Ages
+
+First like *Cabin*  I will create a new variable called *AgeMissing* to record missing age in the original dataset. In order to predict the missing ages, I will first extract the *Title* from the name column and save them in the *Title* column. Further, I will categorize all the titles into four categories of *Officer*, *Royalty*, *Mrs* and *Miss*. By experimenting I found that *cubist* model performs better than other models in predicting the age so I will use it to predict missing ages.
+
+```{r impute_age}
+# Fill in the missing values in age column
+df <- df %>% mutate(AgeMissing = ifelse(is.na(Age), "Yes","No"))
+
+df$Title <- str_extract(df$Name, ",\\s*\\w+") %>% str_remove(., pattern = ", ") 
+
+df$Title[df$Title %in% c('Capt', 'Col', 'Major', 'the')] <- 'Officer'
+df$Title[df$Title %in% c('Don','Dr','Rev','Sir','Jonkheer','Countess','Lady','Dona')] <- 'Royalty'
+df$Title[df$Title %in% c('Mrs','Mme')] <- 'Mrs'
+df$Title[df$Title %in% c('Ms','Mlle')] <- 'Miss'
+
+age_lt_66 <- df %>% filter(Age <= 66) %>% select(Pclass, Parch, SibSp, Embarked, Title, Age)
+
+ctrl <- trainControl(method = "repeatedcv",
+                     repeats = 5)
+
+age.formula <- as.formula(Age ~ Pclass + SibSp + Parch + Embarked + Title)
+# Look at the model
+model.age <- train(age.formula, data = age_lt_66, method = "cubist", trControl = ctrl, tuneLength = 5)
+
+model.age
+
+to_predict <- df %>% filter(is.na(Age))%>%select(Pclass, Sex, Fare, Parch, Embarked, SibSp, Title)
+age.predictions <- predict(model.age, newdata = to_predict)
+
+df$Age <- ifelse(is.na(df$Age), age.predictions, df$Age)
+```
+
+Like Cabin we will create a new variable called *AgeMissing* to encode if the Age information was missing in the original dataset.
+
+## Feature engineering
+
+Let us create new variables and remove the id variables. 
+
+1. Convert *Pclass* into factor variable.
+2. Make a new variable called *Ticket_len* by calculating the length of the ticket characters.
+3. Make a new variable called *Ticket_parts* by calculating the parts in the tickets.
+4. Make a new variable called *Family* by adding Parch, SibSp and 1. 
+5. A binary variable called *Large Family* if the family has more than 4 members. 
+6. A binary variable called *fare_gt_50* where fare >= 50.
+7. Remove Name, PassengerId and Ticket variables.
+8. Convert all character variables to factor variables.
+9. Convert factor variables to one-hot encoded variables.
+10. Convert age and fare variables into categorical variable by binning.
+11. Create a new variable called *family_size* to categorize the size of the family.
+
+```{r prepare_data, warning=FALSE}
+# Convert Pclass into factor variable
+df <- df %>% mutate(Pclass = ifelse(Pclass == 1, "One", ifelse(Pclass == 2, "Two", "Three")))
+df$Pclass <- as.factor(df$Pclass)
+
+# make bins of age and fare
+df$agebins <- custom_cut(df$Age, upper = 70, by = 9)
+df$farebins <- custom_cut(df$Fare, upper = 60, by = 10)
+
+df <- df %>% mutate(Ticket_len = map_dbl(Ticket, nchar))
+df <- df %>% mutate(Ticket_parts = str_split(Ticket, pattern = " ") %>% map_dbl(., length))
+
+df <- df %>% mutate(family = (Parch + SibSp + 1))
+
+df <- df %>% mutate(family_size = case_when(family == 1 ~ "Alone",
+                                                 family %in% c(2,3,4) ~ "Small",
+                                                 family %in% c(5,6) ~ "Medium",
+                                                 family %in% c(7,8,11) ~ "Large"))
+
+
+df$LargeFamily <- ifelse(df$family > 4, "Yes", "No")
+
+df <- df %>% mutate(fare_gt_50 = ifelse(Fare >= 50, "Yes", "No"))
+
+df <- df %>% mutate(PclassThree_female = ifelse(Pclass == "Three" & Sex == "female", "Yes","No"))
+# Remove columns not required
+df <- df %>% select(-c(PassengerId, Name, Ticket))
+df <- df %>% mutate_if(is.character, as.factor)
+df_copy <- df # Make a copy
+
+# One hot encode the categorical variables
+dmy <- dummyVars("~Pclass + Sex + Embarked + Title + fare_gt_50 + AgeMissing + LargeFamily + agebins + farebins + family_size + CabinMissing + Cabin + PclassThree_female" , data = df)
+ohe_df <- predict(dmy, newdata = df) %>% as.data.frame()
+
+num_df <- df %>% select_if(funs(is.numeric(.)| is.logical(.))) %>% as.data.frame()
+df <- cbind(ohe_df,num_df)
+
+
+# # Preprocess
+pre_process <- df %>%  preProcess(., method = c("center","scale"))
+df <- predict(pre_process, newdata = df)
+```
+
+## Train Test split
+ 
+Split the dataset into train, test and validation set. Validation set will be used to get the model performance however should not be used as sole cretirea for model selection. It should be used along with cross-validation performance. 
+
+```{r train_test_split}
+train <- df %>% filter(isTrain == TRUE) %>% select(-c(isTrain))
+test_x <- df %>% filter(isTrain == FALSE) %>% select(-c(isTrain))
+
+train_x_full <- train
+train_y_full <- as.factor(make.names(survived))
+
+
+metric <- "logLoss"
+
+ctrl <- trainControl(
+  method = "cv", 
+  number = 5, 
+  savePredictions = "all", 
+  classProbs = TRUE, 
+  summaryFunction = multiClassSummary, 
+  verboseIter = FALSE)
+
+# split the data
+set.seed(3000)
+inTrain <- createDataPartition(survived, p = 0.10, list = FALSE)
+
+train_x <- train[-inTrain,]
+val_x <- train[inTrain,]
+
+train_y <- as.factor(make.names(survived))[-inTrain]
+val_y <- as.factor(make.names(survived))[inTrain]
+```
+
+## Logistic Regression
+Train the model with all the features. 
+```{r the logisticRegression, message=FALSE, warning=FALSE}
+set.seed(3000)
+
+weights <- c(0.623,1.000)
+
+model_weights <- ifelse(train_y == "0", weights[1], weights[2])
+
+model_glm <- train(x = train_x, y = train_y, method = "glm", trControl = ctrl, metric = metric, weights = model_weights)
+
+# Evaluate the model on the test data
+cm_glm <- cm(model = model_glm, data = val_x, target = val_y)
+
+print(cm_glm)
+```
+
+### Importance of variables
+```{r var_imp}
+summary(model_glm)
+```
+
+It looks like some features like *Sex*,*fare_gt_50*,*family_size*,*Ticket_len*,*Parch* and *SibSp* are not contributing to the model. Let us remove these variables and build the model the again to see if we get a similar accuracy.
+
+```{r selected_features}
+# Let us select few variables
+df_copy_selected <- df_copy %>% select(c(Pclass,Embarked,Title,LargeFamily,Age,Cabin,farebins,family,AgeMissing,Sex,isTrain))
+#df_copy_selected <- df_copy %>% select(c(Pclass,Embarked,Title,LargeFamily,Age,farebins,PclassThree_female,isTrain))
+
+train <- df_copy_selected %>% filter(isTrain == TRUE) %>% select(-c(isTrain)) %>% as.data.frame()
+test_x <- df_copy_selected %>% filter(isTrain == FALSE) %>% select(-c(isTrain)) %>% as.data.frame()
+
+train_x_full <- train
+train_y_full <- as.factor(make.names(survived))
+
+# split the data
+set.seed(3000)
+inTrain <- createDataPartition(survived, p = 0.10, list = FALSE)
+
+train_x <- train[-inTrain,]
+val_x <- train[inTrain,]
+
+train_y <- as.factor(make.names(survived))[-inTrain]
+val_y <- as.factor(make.names(survived))[inTrain]
+
+set.seed(3000)
+
+weights <- c(0.623,1.000)
+
+model_weights <- ifelse(train_y == "0", weights[1], weights[2])
+
+model_glm_selected <- train(x = train_x, y = train_y, method = "glm", trControl = ctrl, metric = metric, weights = model_weights, preProcess = c("center", "scale"))
+
+# Evaluate the model on the test data
+cm_glm_selected <- cm(model = model_glm_selected, data = val_x, target = val_y)
+
+print(cm_glm_selected)
+
+# Let us build the model with the whole training set
+model_weights <- ifelse(train_y_full == "0", weights[1], weights[2])
+
+model_glm_full <- train(x = train_x_full, y = train_y_full, method = "glm", trControl = ctrl, metric = metric, weights = model_weights, preProcess = c("center", "scale"))
+```
+
+## Random forest
+
+Let us use the same variables to build the random forest model. RF can take care of outliers so no need for pre-processing of the data. 
+
+```{r rf}
+set.seed(3000)
+
+weights <- c(0.623,1.000)
+
+model_weights <- ifelse(train_y == "0", weights[1], weights[2])
+
+model_rf <- train(x = train_x, y = train_y, method = "rf", trControl = ctrl, metric = metric, weights = model_weights, tuneLength = 8)
+
+# Evaluate the model on the validation data
+cm_rf<- cm(model = model_rf, data = val_x, target = val_y)
+
+print(cm_rf)
+# Let us build the model with the full training data
+model_weights <- ifelse(train_y_full == "0", weights[1], weights[2])
+
+model_rf_full <- train(x = train_x_full, y = train_y_full, method = "rf", trControl = ctrl, metric = metric, weights = model_weights, tuneLength = 8)
+```
+
+## GLM Boost
+
+Let us try GLM Boost model.
+
+```{r glmboost, message=FALSE, warning=FALSE}
+set.seed(3000)
+
+weights <- c(0.623,1.000)
+
+model_weights <- ifelse(train_y == "0", weights[1], weights[2])
+
+model_glmboost<- train(x = train_x, y = train_y, method = "glmboost", trControl = ctrl, metric = metric, weights = model_weights, tuneLength = 10, preProcess = c("center","scale"))
+
+# Evaluate the model on the test data
+cm_glmboost <- cm(model = model_glmboost, data = val_x, target = val_y)
+
+print(cm_glmboost)
+
+model_weights <- ifelse(train_y_full == "0", weights[1], weights[2])
+
+model_glmboost_full <- train(x = train_x_full, y = train_y_full, method = "glmboost", trControl = ctrl, metric = metric, tuneLength = 10, weights = model_weights, preProcess = c("center","scale"))
+```
+
+# Submit to Kaggle
+
+Generate the prediction file to submit the predictions to Kaggle. 
+
+```{r submitPredictions}
+  # Predict the model on the test data
+  pred <- predict(model_glm_full, test_x) %>% str_remove(., pattern = "X") %>% as.integer()
+  sample_submission <- read.csv("gender_submission.csv", header = TRUE, stringsAsFactors = F)
+  sample_submission$Survived <- pred
+  write.csv(sample_submission, file = "glm_submission.csv",quote = FALSE, row.names = FALSE)
+```
+
+I got the score of 79.4% in Kaggle which is not bad however, it is way below the test score I got in the GLM model (~88%) which suggest that my model has overfit the training data.
